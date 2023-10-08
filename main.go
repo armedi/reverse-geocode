@@ -44,6 +44,13 @@ func main() {
 		panic(err)
 	}
 
+	numWorkers := runtime.NumCPU()
+	featuresSet := make([][]*geojson.Feature, numWorkers)
+
+	for i, feature := range fc.Features {
+		featuresSet[i%numWorkers] = append(featuresSet[i%numWorkers], feature)
+	}
+
 	app := fiber.New()
 
 	app.Get("/area/:coordinate", func(c *fiber.Ctx) error {
@@ -61,7 +68,7 @@ func main() {
 			return c.Status(fiber.StatusBadRequest).SendString("Invalid coordinate")
 		}
 
-		result, err := reverseGeocode(fc.Features, lat, lon)
+		result, err := reverseGeocode(featuresSet, lat, lon)
 
 		if err != nil {
 			return c.Status(fiber.StatusNotFound).SendString(err.Error())
@@ -73,50 +80,53 @@ func main() {
 	app.Listen(":3000")
 }
 
-func reverseGeocode(features []*geojson.Feature, lat float64, lon float64) (map[string]interface{}, error) {
+func reverseGeocode(featuresSet [][]*geojson.Feature, lat float64, lon float64) (map[string]interface{}, error) {
 	point := orb.Point{lon, lat}
 
-	numWorkers := runtime.NumCPU()
-	jobs := make([]chan *geojson.Feature, numWorkers)
-	results := make(chan map[string]interface{}, len(features))
+	results := make(chan map[string]interface{}, len(featuresSet))
 
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
-	for i := 0; i < numWorkers; i++ {
-		jobs[i] = make(chan *geojson.Feature, len(features)/numWorkers)
-		go reverseGeocodeWorker(ctx, point, jobs[i], results)
+	for _, features := range featuresSet {
+		jobs := make(chan *geojson.Feature, len(features))
+
+		go func(features []*geojson.Feature) {
+			for _, job := range features {
+				select {
+				case <-ctx.Done():
+					return
+				default:
+					jobs <- job
+				}
+			}
+		}(features)
+
+		go func() {
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case job := <-jobs:
+					_, ok := job.Geometry.(orb.Polygon)
+					if ok && job.Geometry.Bound().Contains(point) {
+						results <- job.Properties
+					} else {
+						results <- nil
+					}
+				}
+			}
+		}()
 	}
 
-	// assign jobs to workers using round-robin scheduling
-	for i, feature := range features {
-		jobs[i%numWorkers] <- feature
-	}
-
-	for i := 0; i < len(features); i++ {
-		result := <-results
-		if result != nil {
-			cancel()
-			return result, nil
-		}
-	}
-
-	cancel()
-
-	return nil, errors.New("not found")
-}
-
-func reverseGeocodeWorker(ctx context.Context, point orb.Point, jobs <-chan *geojson.Feature, results chan<- map[string]interface{}) {
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case feature := <-jobs:
-			_, ok := feature.Geometry.(orb.Polygon)
-			if ok && feature.Geometry.Bound().Contains(point) {
-				results <- feature.Properties
-			} else {
-				results <- nil
+	for i := 0; i < len(featuresSet); i++ {
+		for j := 0; j < len(featuresSet[i]); j++ {
+			result := <-results
+			if result != nil {
+				return result, nil
 			}
 		}
 	}
+
+	return nil, errors.New("not found")
 }
