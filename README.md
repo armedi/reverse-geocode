@@ -1,8 +1,10 @@
 # reverse-geocode
 
-Download geojson file here: 
+Download geojson file here: https://drive.google.com/file/d/1NyBm12FKYJoK2cr1nOkAjqO3AZ3gdvVK/view?usp=sharing
 
-You can generate your own data with higher resolution from this original [Shapefile](https://geoservices.big.go.id/portal/apps/webappviewer/index.html?id=49bda2cefd3f4b92aa726300bcdb40f7)
+Note: The data contains a very simplified map, so it has low accuracy
+
+You can generate your own data with higher accuracy from this original [Shapefile](https://www.indonesia-geospasial.com/2023/05/download-shapefile-batas-administrasi.html)
 
 Set `GEOJSON_FILE` env with proper value.
 
